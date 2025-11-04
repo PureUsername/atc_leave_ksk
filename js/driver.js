@@ -3,7 +3,6 @@ import {
   apiGet,
   apiPost,
   addDays,
-  buildCalendarEmbedUrl,
   fmt,
   getCategoryChannelConfig,
   normalizeDriver,
@@ -31,14 +30,10 @@ const capacityHintContainer = qs("#capacityHints");
 const statusLabel = qs("#status");
 const dateRangeInput = qs("#dateRange");
 const forceModal = qs("#forceModal");
-const driverCalendarSection = qs("#driverCalendarSection");
-const driverCalendarFrame = qs("#driverCalendarFrame");
-const driverCalendarLink = qs("#driverCalendarLink");
-const driverCalendarLabel = qs("#driverCalendarLabel");
 const calendarUpdateMode =
   document.querySelector("[data-calendar-update-mode]")?.dataset?.calendarUpdateMode || "after_approval";
 let dateRangePicker = null;
-const driverCategoryFilterMeta = document.querySelector('meta[name="driver-category-filter"]') || null;
+const driverCategoryFilterInput = document.querySelector('#driverCategoryFilter') || null;
 
 const DEFAULT_CATEGORY_GROUPS = [
   { id: "LOWBED", label: "LOWBED", categories: ["LOWBED"] },
@@ -151,9 +146,9 @@ const collectHiddenCategoryFilters = () => {
   if (selectFilter) {
     tokens.push(selectFilter);
   }
-  const metaValue = driverCategoryFilterMeta?.content || "";
-  if (metaValue) {
-    tokens.push(metaValue);
+  const inputValue = driverCategoryFilterInput?.value || "";
+  if (inputValue) {
+    tokens.push(inputValue);
   }
   qsa("[data-driver-category-filter]").forEach((node) => {
     if (!node) {
@@ -252,36 +247,6 @@ const getActiveCategoryChannelConfig = (driver = null) => {
   return getCategoryChannelConfig(groupId);
 };
 
-const updateDriverCalendarEmbed = (driver = null, options = {}) => {
-  if (!driverCalendarSection || !driverCalendarFrame) {
-    return;
-  }
-  const channelConfig = getActiveCategoryChannelConfig(driver);
-  if (!channelConfig?.calendarId) {
-    driverCalendarSection.classList.add("hidden");
-    return;
-  }
-  const params = options.refresh
-    ? { refreshToken: Date.now() }
-    : {};
-  const src = buildCalendarEmbedUrl(channelConfig.calendarId, params);
-  if (src) {
-    driverCalendarFrame.src = src;
-  }
-  driverCalendarFrame.dataset.calendarId = channelConfig.calendarId;
-  driverCalendarSection.classList.remove("hidden");
-  if (driverCalendarLabel) {
-    driverCalendarLabel.textContent = channelConfig.label ? `Kalendar ${channelConfig.label}` : "Kalendar Google";
-  }
-  if (driverCalendarLink) {
-    if (channelConfig.calendarUrl) {
-      driverCalendarLink.href = channelConfig.calendarUrl;
-      driverCalendarLink.classList.remove("hidden");
-    } else {
-      driverCalendarLink.classList.add("hidden");
-    }
-  }
-};
 
 const driverMatchesActiveFilter = (driver, filterState) => {
   if (!driver || driver.active === false) {
@@ -576,6 +541,19 @@ const sendLeaveNotificationWithSnapshot = async (notification = {}, dates = [], 
     notification.metadata.calendar_update_mode = calendarUpdateMode;
   }
 
+  const channelConfig = getActiveCategoryChannelConfig(driver);
+  if (channelConfig) {
+    if (channelConfig.chatId && !notification.metadata.chat_id) {
+      notification.metadata.chat_id = channelConfig.chatId;
+    }
+    if (channelConfig.id && !notification.metadata.calendar_channel_id) {
+      notification.metadata.calendar_channel_id = channelConfig.id;
+    }
+    if (channelConfig.calendarId && !notification.metadata.calendar_id) {
+      notification.metadata.calendar_id = channelConfig.calendarId;
+    }
+  }
+
   const metadataSource =
     notification.metadata && typeof notification.metadata === "object"
       ? notification.metadata
@@ -599,7 +577,18 @@ const sendLeaveNotificationWithSnapshot = async (notification = {}, dates = [], 
     metadata.calendar_update_mode = calendarUpdateMode;
   }
 
-  const channelConfig = getActiveCategoryChannelConfig(driver);
+  if (channelConfig) {
+    if (channelConfig.chatId && !metadata.chat_id) {
+      metadata.chat_id = channelConfig.chatId;
+    }
+    if (channelConfig.id && !metadata.calendar_channel_id) {
+      metadata.calendar_channel_id = channelConfig.id;
+    }
+    if (channelConfig.calendarId && !metadata.calendar_id) {
+      metadata.calendar_id = channelConfig.calendarId;
+    }
+  }
+
   const approvalBody = buildApprovalChatBody(notification) || notification.message;
   const approvalPayload = {
     chatId: channelConfig.chatId,
@@ -774,8 +763,6 @@ const renderDriverOptions = () => {
   } else {
     placeholder.selected = true;
   }
-  const selectedDriver = getDriverById(driverSelect.value);
-  updateDriverCalendarEmbed(selectedDriver);
 };
 
 const collectSelectedDates = () => {
@@ -928,20 +915,31 @@ const submitForm = async () => {
 
   setStatus("Sedang dihantar...");
 
+  const selectedDriver = getDriverById(driverId);
+  const calendarChannelConfig = getActiveCategoryChannelConfig(selectedDriver);
+
   try {
     const response = await apiPost("apply", {
       driver_id: driverId,
       start_date: start,
       end_date: end,
+      calendar_channel_id: calendarChannelConfig?.id,
+      calendar_id: calendarChannelConfig?.calendarId,
+      calendar_label: calendarChannelConfig?.label,
+      chat_id: calendarChannelConfig?.chatId,
     });
     if (response.ok) {
-      const driver = getDriverById(driverId);
       toast(
         `Permohonan dihantar untuk ${response.applied_dates.length} hari`,
         "ok",
         { position: "center" }
       );
-      await afterApplied(response.applied_dates, { driver, driverId, notification: response.notification });
+      await afterApplied(response.applied_dates, {
+        driver: selectedDriver,
+        driverId,
+        notification: response.notification,
+        calendarChannelConfig,
+      });
       resetPendingForceState();
     } else {
       const errors = Array.isArray(response.errors) ? response.errors : [];
@@ -1007,10 +1005,15 @@ const confirmForce = async () => {
     return;
   }
   const driver = getDriverById(driverId);
+  const calendarChannelConfig = getActiveCategoryChannelConfig(driver);
   try {
     const response = await apiPost("apply_force3", {
       driver_id: driverId,
       start_date: state.pendingForceStart,
+      calendar_channel_id: calendarChannelConfig?.id,
+      calendar_id: calendarChannelConfig?.calendarId,
+      calendar_label: calendarChannelConfig?.label,
+      chat_id: calendarChannelConfig?.chatId,
     });
     if (response.ok) {
       toast(
@@ -1105,10 +1108,6 @@ const initializeDatePicker = () => {
 };
 
 // Event bindings
-driverSelect?.addEventListener("change", () => {
-  const driver = getDriverById(driverSelect.value);
-  updateDriverCalendarEmbed(driver);
-});
 qs("#btnSubmit")?.addEventListener("click", submitForm);
 qs("#btnCancelForce")?.addEventListener("click", () => {
   hideForceModal();
