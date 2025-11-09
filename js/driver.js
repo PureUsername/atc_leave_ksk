@@ -6,6 +6,7 @@ import {
   fmt,
   getCategoryChannelConfig,
   normalizeDriver,
+  resolveUrl,
   qs,
   qsa,
   toast,
@@ -992,17 +993,18 @@ const submitForm = async () => {
 
   const selectedDriver = getDriverById(driverId);
   const calendarChannelConfig = getActiveCategoryChannelConfig(selectedDriver);
+  const requestPayload = {
+    driver_id: driverId,
+    start_date: start,
+    end_date: end,
+    calendar_channel_id: calendarChannelConfig?.id,
+    calendar_id: calendarChannelConfig?.calendarId,
+    calendar_label: calendarChannelConfig?.label,
+    chat_id: calendarChannelConfig?.chatId,
+  };
 
   try {
-    const response = await apiPost("apply", {
-      driver_id: driverId,
-      start_date: start,
-      end_date: end,
-      calendar_channel_id: calendarChannelConfig?.id,
-      calendar_id: calendarChannelConfig?.calendarId,
-      calendar_label: calendarChannelConfig?.label,
-      chat_id: calendarChannelConfig?.chatId,
-    });
+    const response = await apiPost("apply", requestPayload);
     if (response.ok) {
       toast(
         `Permohonan dihantar untuk ${response.applied_dates.length} hari`,
@@ -1052,6 +1054,16 @@ const submitForm = async () => {
       { position: "center" }
     );
     setStatus("Penghantaran gagal.");
+    const queued = await queueOfflineSubmission("apply", requestPayload, {
+      driver: selectedDriver,
+      error,
+      calendarChannelConfig,
+    });
+    if (queued) {
+      setStatus(
+        "Penghantaran gagal. Permohonan disimpan untuk tindakan admin."
+      );
+    }
     return;
   }
 
@@ -1078,15 +1090,16 @@ const confirmForce = async () => {
   }
   const driver = getDriverById(driverId);
   const calendarChannelConfig = getActiveCategoryChannelConfig(driver);
+  const requestPayload = {
+    driver_id: driverId,
+    start_date: state.pendingForceStart,
+    calendar_channel_id: calendarChannelConfig?.id,
+    calendar_id: calendarChannelConfig?.calendarId,
+    calendar_label: calendarChannelConfig?.label,
+    chat_id: calendarChannelConfig?.chatId,
+  };
   try {
-    const response = await apiPost("apply_force3", {
-      driver_id: driverId,
-      start_date: state.pendingForceStart,
-      calendar_channel_id: calendarChannelConfig?.id,
-      calendar_id: calendarChannelConfig?.calendarId,
-      calendar_label: calendarChannelConfig?.label,
-      chat_id: calendarChannelConfig?.chatId,
-    });
+    const response = await apiPost("apply_force3", requestPayload);
     if (response.ok) {
       toast(
         "Permohonan paksa 3 hari bekerja disahkan.",
@@ -1111,7 +1124,61 @@ const confirmForce = async () => {
       "error",
       { position: "center" }
     );
+    const queued = await queueOfflineSubmission("apply_force3", requestPayload, {
+      driver,
+      error,
+      calendarChannelConfig,
+    });
+    if (queued) {
+      setStatus(
+        "Permohonan paksa gagal dihantar dan telah disimpan untuk tindakan admin."
+      );
+    }
   }
+};
+
+const queueOfflineSubmission = async (endpoint, requestPayload, { driver, error, calendarChannelConfig } = {}) => {
+  const driverId = requestPayload?.driver_id || driver?.driver_id || driver?.driverId || "";
+  const driverName = driver?.display_name || driver?.displayName || "";
+  const payload = {
+    endpoint,
+    request: requestPayload,
+    driver_id: driverId,
+    driver_name: driverName,
+    start_date: requestPayload?.start_date || null,
+    end_date: requestPayload?.end_date || null,
+    calendar_channel_id: requestPayload?.calendar_channel_id || null,
+    calendar_label: calendarChannelConfig?.label || requestPayload?.calendar_label || null,
+    chat_id: requestPayload?.chat_id || null,
+    error_message: error?.message || String(error || ""),
+    client_timestamp: new Date().toISOString(),
+    source: "driver_portal",
+  };
+
+  try {
+    const url = resolveUrl("offline_queue");
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      credentials: "same-origin",
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(`Status ${response.status}`);
+    }
+    toast(
+      "Permohonan disimpan untuk tindakan admin. Anda akan dihubungi sebaik sahaja sistem kembali.",
+      "mid",
+      { position: "center", duration: 6000 }
+    );
+    return true;
+  } catch (queueError) {
+    console.error("Failed to queue offline submission", queueError);
+  }
+  return false;
 };
 
 const afterApplied = async (dates, { driver, driverId, notification } = {}) => {
