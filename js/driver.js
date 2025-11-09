@@ -1182,6 +1182,68 @@ const queueOfflineSubmission = async (endpoint, requestPayload, { driver, error,
   return false;
 };
 
+const normalizeError = (error, fallbackMessage = "Unknown error") => {
+  if (error instanceof Error) {
+    return error;
+  }
+  if (error && typeof error === "object") {
+    const message = typeof error.message === "string" && error.message.trim()
+      ? error.message.trim()
+      : fallbackMessage;
+    const normalized = new Error(message);
+    Object.keys(error).forEach((key) => {
+      try {
+        normalized[key] = error[key];
+      } catch (assignError) {
+        console.warn("Failed to copy error property", key, assignError);
+      }
+    });
+    return normalized;
+  }
+  return new Error(typeof error === "string" && error.trim() ? error.trim() : fallbackMessage);
+};
+
+const describeValue = (value) => {
+  if (value == null) {
+    return null;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value instanceof Error) {
+    return `${value.name || "Error"}: ${value.message}`;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch (serializationError) {
+    return String(value);
+  }
+};
+
+const notifyClientException = async ({
+  context,
+  error,
+  details = {},
+} = {}) => {
+  const normalizedError = normalizeError(error, context || "Client error");
+  const requestPayload = {
+    error_context: context || "client_error",
+    error_name: normalizedError.name || null,
+    error_stack: normalizedError.stack || null,
+    error_details: details,
+    page_url: typeof window !== "undefined" ? window.location?.href || null : null,
+    user_agent: typeof navigator !== "undefined" ? navigator.userAgent || null : null,
+  };
+
+  try {
+    await queueOfflineSubmission("client_exception", requestPayload, {
+      error: normalizedError,
+    });
+  } catch (notificationError) {
+    console.error("Failed to notify client exception", notificationError);
+  }
+};
+
 const afterApplied = async (dates, { driver, driverId, notification } = {}) => {
   const appliedDates = Array.isArray(dates) ? dates : [];
   const approvedCount = appliedDates.length;
@@ -1260,3 +1322,34 @@ qs("#btnConfirmForce")?.addEventListener("click", confirmForce);
   initializeDatePicker();
   await loadDrivers();
 })();
+
+window.addEventListener("error", (event) => {
+  if (!event) {
+    return;
+  }
+  const { message, filename, lineno, colno, error } = event;
+  notifyClientException({
+    context: "window_error",
+    error: error || message,
+    details: {
+      message,
+      filename: filename || null,
+      line: lineno || null,
+      column: colno || null,
+    },
+  });
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  if (!event) {
+    return;
+  }
+  const reasonDescription = describeValue(event.reason);
+  notifyClientException({
+    context: "unhandled_rejection",
+    error: event.reason || reasonDescription,
+    details: {
+      reason: reasonDescription,
+    },
+  });
+});
