@@ -1249,7 +1249,7 @@ const notifyClientException = async ({
   const normalizedError = normalizeError(error, context || "Client error");
   const requestPayload = {
     ...(request || {}),
-    error_context: context || "client_error",
+    error_context: context || "apply",
     error_name: normalizedError.name || null,
     error_stack: normalizedError.stack || null,
     error_details: details,
