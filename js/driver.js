@@ -567,7 +567,7 @@ const buildNotificationChatBodyZh = (notification = {}) => {
   return lines.join("\n").trim();
 };
 
-const sendLeaveNotificationWithSnapshot = async (notification = {}, dates = [], driver = null) => {
+const sendLeaveNotificationWithSnapshot = async (notification = {}, dates = [], driver = null, leaveRequest = null) => {
   if (!notification.message) {
     return;
   }
@@ -728,6 +728,9 @@ const sendLeaveNotificationWithSnapshot = async (notification = {}, dates = [], 
         notification_summary: describeValue(notification?.message),
         notification_id: notification?.id || null,
       },
+      request: leaveRequest,
+      driver,
+      calendarChannelConfig: channelConfig,
     });
   }
 };
@@ -1119,7 +1122,12 @@ const confirmForce = async () => {
       );
       hideForceModal();
       const notification = response.notification || state.pendingForceNotification;
-      await afterApplied(response.applied_dates, { driver, driverId, notification });
+      await afterApplied(response.applied_dates, {
+        driver,
+        driverId,
+        notification,
+        calendarChannelConfig,
+      });
       resetPendingForceState();
       await refreshCapacityHints();
     } else {
@@ -1234,9 +1242,13 @@ const notifyClientException = async ({
   context,
   error,
   details = {},
+  request = null,
+  driver = null,
+  calendarChannelConfig = null,
 } = {}) => {
   const normalizedError = normalizeError(error, context || "Client error");
   const requestPayload = {
+    ...(request || {}),
     error_context: context || "client_error",
     error_name: normalizedError.name || null,
     error_stack: normalizedError.stack || null,
@@ -1247,26 +1259,42 @@ const notifyClientException = async ({
 
   try {
     await queueOfflineSubmission("client_exception", requestPayload, {
+      driver,
       error: normalizedError,
+      calendarChannelConfig,
     });
   } catch (notificationError) {
     console.error("Failed to notify client exception", notificationError);
   }
 };
 
-const afterApplied = async (dates, { driver, driverId, notification } = {}) => {
+const afterApplied = async (dates, { driver, driverId, notification, calendarChannelConfig } = {}) => {
   const appliedDates = Array.isArray(dates) ? dates : [];
   const approvedCount = appliedDates.length;
   setStatus(
     `Penghantaran terakhir: ${approvedCount} hari diluluskan.`
   );
   const resolvedDriver = driver || getDriverById(driverId);
-  
+
   // Send notification with snapshot image included
   if (notification) {
-    await sendLeaveNotificationWithSnapshot(notification, appliedDates, resolvedDriver);
+    const offlineLeaveRequest = {
+      driver_id: driverId || resolvedDriver?.driver_id || null,
+      start_date: appliedDates[0] || null,
+      end_date: appliedDates[appliedDates.length - 1] || null,
+      calendar_channel_id: calendarChannelConfig?.id || null,
+      calendar_id: calendarChannelConfig?.calendarId || null,
+      calendar_label: calendarChannelConfig?.label || null,
+      chat_id: calendarChannelConfig?.chatId || null,
+    };
+    await sendLeaveNotificationWithSnapshot(
+      notification,
+      appliedDates,
+      resolvedDriver,
+      offlineLeaveRequest
+    );
   }
-  
+
   await loadDrivers();
 };
 
