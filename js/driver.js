@@ -1039,13 +1039,14 @@ const submitForm = async () => {
         return;
       }
       resetPendingForceState();
-      const message = response.message || "Failed to submit leave.";
-      toast(
-        `Gagal menghantar permohonan: ${message}`,
-        "error",
-        { position: "center" }
-      );
-      setStatus(message);
+      // const message = response.message || "Failed to submit leave.";
+      // toast(
+      //   `Gagal menghantar permohonan: ${message}`,
+      //   "error",
+      //   { position: "center" }
+      // );
+      // setStatus(message);
+      throw new Error(`Failed to submit leave.`);
     }
   } catch (error) {
     toast(
