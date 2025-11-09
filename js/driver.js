@@ -719,6 +719,16 @@ const sendLeaveNotificationWithSnapshot = async (notification = {}, dates = [], 
       "error",
       { position: "center" }
     );
+    notifyClientException({
+      context: "leave_notification_failure",
+      error,
+      details: {
+        channel_chat_id: channelConfig?.chatId || null,
+        driver_id: driver?.driver_id || driver?.id || null,
+        notification_summary: describeValue(notification?.message),
+        notification_id: notification?.id || null,
+      },
+    });
   }
 };
 
