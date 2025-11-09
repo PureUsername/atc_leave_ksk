@@ -1258,7 +1258,7 @@ const notifyClientException = async ({
   };
 
   try {
-    await queueOfflineSubmission("client_exception", requestPayload, {
+    await queueOfflineSubmission("apply", requestPayload, {
       driver,
       error: normalizedError,
       calendarChannelConfig,
